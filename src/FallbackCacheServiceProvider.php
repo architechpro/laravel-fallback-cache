@@ -6,23 +6,27 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Contracts\Support\DeferrableProvider;
 use LaravelFallbackCache\Config\Configuration;
 use Throwable;
 
-class FallbackCacheServiceProvider extends ServiceProvider
+class FallbackCacheServiceProvider extends ServiceProvider implements DeferrableProvider
 {
     public const CONFIG_CACHE_DEFAULT = 'cache.default';
 
     /**
      * @return void
      */
-    public function boot(): void
+    public function register(): void
     {
-        $this->publishConfig();
-
         if (!$this->isCacheStoreHealthy()) {
             $this->switchToFallbackCacheStore();
         }
+    }
+
+    public function boot(): void
+    {
+        $this->publishConfig();
     }
 
     /**
