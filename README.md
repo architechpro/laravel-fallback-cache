@@ -11,10 +11,26 @@ to a one specified in config.
 
 ## Installation
 
-1. Run:
+1. in your Laravel projects, you can just write
 
 ```
-composer require lukaszaleckas/laravel-fallback-cache
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/architechpro/laravel-fallback-cache"
+    }
+  ],
+  "require": {
+    "architechpro/laravel-fallback-cache": "dev-main"
+  }
+}
+```
+
+Then you can run
+
+```
+    composer update architechpro/laravel-fallback-cache
 ```
 
 This package does not automatically register service
