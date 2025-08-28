@@ -42,21 +42,30 @@ class FallbackCacheServiceProvider extends ServiceProvider
     private function isCacheStoreHealthy(): bool
     {
         try {
-            Cache::get('');
+            $store = Config::get(self::CONFIG_CACHE_DEFAULT);
+            
+            // Only test connection for Redis store
+            if ($store === 'redis') {
+                $redis = Cache::store('redis')->getRedis();
+                
+                // This command has minimal overhead and will fail fast if Redis is down
+                $redis->ping();
+            }
+            
+            return true;
         } catch (Throwable $exception) {
             Log::error(
                 'Cache store is unhealthy',
                 [
                     'exception' => get_class($exception),
                     'message'   => $exception->getMessage(),
-                    'trace'     => $exception->getTraceAsString()
+                    'trace'     => $exception->getTraceAsString(),
+                    'store' => $store ?? Config::get(self::CONFIG_CACHE_DEFAULT)
                 ]
             );
 
             return false;
         }
-
-        return true;
     }
 
     /**
