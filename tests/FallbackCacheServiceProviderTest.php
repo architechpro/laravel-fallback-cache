@@ -66,4 +66,33 @@ class FallbackCacheServiceProviderTest extends TestCase
 
         $this->serviceProvider->boot();
     }
+
+    /**
+     * @test
+     */
+    public function testRedisUnavailableFailover(): void
+    {
+        // Configure Redis as the default cache store
+        Config::set('cache.default', 'redis');
+        Config::set('cache.stores.redis', [
+            'driver' => 'redis',
+            'connection' => 'cache',
+            'host' => '127.0.0.1',
+            'password' => null,
+            'port' => 63799 // Using intentionally wrong port
+        ]);
+
+        // Configure fallback cache store
+        Config::set('fallback-cache.fallback_cache_store', 'file');
+        
+        // Initialize the service provider
+        $this->serviceProvider->boot();
+
+        // Verify that the cache store has been switched to file
+        $this->assertEquals('file', Config::get('cache.default'));
+
+        // Try to use cache to verify it works
+        Cache::put('test_key', 'test_value', 60);
+        $this->assertEquals('test_value', Cache::get('test_key'));
+    }
 }
