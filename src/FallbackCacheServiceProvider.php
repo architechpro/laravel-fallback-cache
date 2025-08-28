@@ -44,12 +44,17 @@ class FallbackCacheServiceProvider extends ServiceProvider
         try {
             $store = Config::get(self::CONFIG_CACHE_DEFAULT);
             
-            // Only test connection for Redis store
             if ($store === 'redis') {
                 $redis = Cache::store('redis')->getRedis();
                 
-                // This command has minimal overhead and will fail fast if Redis is down
+                // First check if Redis is responding
                 $redis->ping();
+                
+                // Then try to perform a read operation
+                $redis->get('health_check_key');
+            } else {
+                // For non-Redis stores, try a simple get operation
+                Cache::store($store)->get('health_check_key');
             }
             
             return true;
