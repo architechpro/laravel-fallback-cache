@@ -2,97 +2,77 @@
 
 namespace LaravelFallbackCache;
 
-use Closure;
-use Illuminate\Cache\Repository;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use LaravelFallbackCache\Config\Configuration;
+use LaravelFallbackCache\Config\FailoverState;
 use Throwable;
 
 class FallbackCacheServiceProvider extends ServiceProvider
 {
     public const CONFIG_CACHE_DEFAULT = 'cache.default';
-    private bool $hasFailedOver = false;
+    /** @var bool */
+    public function setFailedOver(bool $value): void
+    {
+        // error_log("Setting failover state to: " . ($value ? "true" : "false"));
+        FailoverState::setFailedOver($value);
+    }
+    
+    public function hasFailedOver(): bool
+    {
+        $result = FailoverState::hasFailedOver();
+        // error_log("Checking failover state: " . ($result ? "true" : "false"));
+        return $result;
+    }
 
-    /**
-     * @return void
-     */
+    protected function getRedisWrapper($redis)
+    {
+        return new RedisWrapper($redis, $this);
+    }
+
     public function register(): void
     {
         parent::register();
 
-        // Intercept Redis connector creation
-        $this->app->extend('redis', function ($redis, $app) {
-            return new class($redis, $app) extends \Illuminate\Redis\RedisManager {
-                protected $app;
-                private $hasFailedOver = false;
+        // Make sure the fallback store is properly configured
+        $fallbackStore = $this->app['config']->get(
+            Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, 
+            Configuration::CACHE_DRIVER_ARRAY
+        );
+        
+        $this->app['config']->set('cache.stores.' . $fallbackStore, [
+            'driver' => $fallbackStore
+        ]);
+        
+        // Initialize failover state
+        $this->setFailedOver(false);
 
-                public function __construct($redis, $app)
-                {
-                    parent::__construct($app, $redis->driver, $redis->config);
-                    $this->app = $app;
-                }
+        FailoverState::setFailedOver(false);
+        
+        $provider = $this;
 
-                public function connection($name = null)
-                {
-                    try {
-                        return parent::connection($name);
-                    } catch (Throwable $e) {
-                        if ($this->hasFailedOver) {
-                            throw $e;
-                        }
-
-                        $currentStore = Config::get('cache.default');
-                        $fallbackStore = Configuration::getFallbackCacheStore();
-
-                        if ($currentStore === $fallbackStore) {
-                            throw $e;
-                        }
-
-                        Log::warning(
-                            'Redis connection failed. Switching cache to fallback store.',
-                            [
-                                'exception' => get_class($e),
-                                'message' => $e->getMessage(),
-                                'from_store' => $currentStore,
-                                'to_store' => $fallbackStore
-                            ]
-                        );
-
-                        Config::set('cache.default', $fallbackStore);
-                        $this->hasFailedOver = true;
-
-                        // Create a new cache instance with the fallback store
-                        Cache::forgetDriver($currentStore);
-                        Cache::forgetDriver($fallbackStore);
-
-                        throw $e; // Re-throw to let Cache handle the fallback
-                    }
-                }
-            };
+        // Override Cache manager to handle failover
+        $this->app->extend('cache', function ($manager, $app) use ($provider) {
+            return new FallbackCacheManager($app, $provider);
         });
+
+        $this->app->singleton(Configuration::class);
+        $this->mergeConfigFrom(__DIR__ . '/Config/fallback-cache.php', Configuration::CONFIG);
     }
 
-    /**
-     * @return void
-     */
     public function boot(): void
     {
-        $this->publishConfig();
-    }
+        $this->publishes([
+            __DIR__ . '/Config/fallback-cache.php' => config_path('fallback-cache.php'),
+        ]);
 
-    /**
-     * @return void
-     */
-    private function publishConfig(): void
-    {
-        $this->publishes(
-            [
-                __DIR__ . '/Config/fallback-cache.php' => config_path('fallback-cache.php'),
-            ],
-            'fallback-cache'
-        );
+        // Make sure the fallback store is properly configured
+        $fallbackStore = Config::get(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, Configuration::CACHE_DRIVER_ARRAY);
+        if (!isset($this->app['config']['cache.stores.' . $fallbackStore])) {
+            $this->app['config']['cache.stores.' . $fallbackStore] = [
+                'driver' => $fallbackStore
+            ];
+        }
     }
 }

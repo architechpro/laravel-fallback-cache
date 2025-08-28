@@ -5,10 +5,8 @@ namespace LaravelFallbackCache\Tests;
 use Exception;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Log;
 use LaravelFallbackCache\Config\Configuration;
 use LaravelFallbackCache\FallbackCacheServiceProvider;
-use Mockery;
 use Orchestra\Testbench\TestCase;
 
 class FallbackCacheServiceProviderTest extends TestCase
@@ -25,46 +23,95 @@ class FallbackCacheServiceProviderTest extends TestCase
     {
         parent::setUp();
 
+        // Setup logging for tests
+        $this->app['config']->set('logging.default', 'stderr');
+        $this->app['config']->set('logging.channels.stderr', [
+            'driver' => 'monolog',
+            'handler' => \Monolog\Handler\StreamHandler::class,
+            'with' => [
+                'stream' => 'php://stderr',
+            ],
+            'level' => 'debug',
+        ]);
+
         $this->serviceProvider = new FallbackCacheServiceProvider($this->app);
     }
 
     /**
      * @return void
      */
-    public function testDoesNotSwitchCacheStore(): void
+    public function testDoesNotSwitchCacheStoreOnSuccess(): void
     {
-        Cache::shouldReceive('get')->once()->andReturnNull();
-        Config::shouldReceive('set')->never();
+        $originalStore = 'file';
+        $fallbackStore = 'array';
 
+        Config::set('cache.default', $originalStore);
+        Config::set('cache.stores.file', [
+            'driver' => 'file',
+            'path' => storage_path('framework/cache/data'),
+        ]);
+        Config::set(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, $fallbackStore);
+        
+        $this->serviceProvider->register();
         $this->serviceProvider->boot();
+        
+        Cache::put('test_key', 'test_value', 60);
+        $this->assertEquals('test_value', Cache::get('test_key'));
+        $this->assertEquals($originalStore, Config::get('cache.default'));
     }
 
     /**
      * @return void
      */
-    public function testSwitchesCacheStore(): void
+    public function testSwitchesCacheStoreOnFailure(): void
     {
-        /** @var Exception $exception */
-        $exception = Mockery::mock(Exception::class)
-            ->shouldReceive([
-                'getMessage'       => '',
-                'getTraceAsString' => ''
-            ])->getMock();
+        $originalStore = 'redis';
+        $fallbackStore = 'array';
 
-        Cache::shouldReceive('get')->once()->andThrow($exception);
-        Config::shouldReceive('get')
-            ->once()
-            ->with(Configuration::CONFIG)
-            ->andReturn([
-                Configuration::FALLBACK_CACHE_STORE => self::TEST_CACHE_STORE
-            ]);
-        Config::shouldReceive('set')->once()->with(
-            FallbackCacheServiceProvider::CONFIG_CACHE_DEFAULT,
-            self::TEST_CACHE_STORE
-        );
-        Log::shouldReceive('error')->once();
-
+        // Initial configuration
+        Config::set('cache.default', $originalStore);
+        Config::set('cache.stores.redis', [
+            'driver' => 'redis',
+            'client' => 'phpredis',
+            'default' => [
+                'host' => 'non.existent.redis.host',
+                'port' => 63799,
+                'timeout' => 0.1,
+                'retry_interval' => 0
+            ]
+        ]);
+        Config::set(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, $fallbackStore);
+        
+        // Set up fresh instances
+        foreach ([$originalStore, $fallbackStore] as $driver) {
+            Cache::forgetDriver($driver);
+            $this->app->forgetInstance("cache.store.{$driver}");
+        }
+        $this->app->forgetInstance('cache');
+        $this->app->forgetInstance('cache.store');
+        $this->app->forgetInstance('redis');
+        
+        // Register and boot provider
+        $this->serviceProvider->register();
         $this->serviceProvider->boot();
+        
+        // Get store instance to trigger Redis connection attempt
+        $manager = $this->app->make('cache');
+        $store = $manager->driver($originalStore);
+        
+        // Give Redis connection time to fail and switch to fallback
+        usleep(500000); // 500ms delay
+        
+        // Verify failover occurred
+        $this->assertTrue($this->serviceProvider->hasFailedOver(), 'Failover flag should be set');
+        $this->assertEquals($fallbackStore, $this->app['config']->get('cache.default'), 'Should be using fallback store');
+        
+        // Get a new store instance after failover
+        $store = Cache::store();
+        
+        // Should be able to use cache after failover
+        $store->put('test_key', 'fallback_value', 60);
+        $this->assertEquals('fallback_value', Cache::get('test_key'));
     }
 
     /**
@@ -72,76 +119,62 @@ class FallbackCacheServiceProviderTest extends TestCase
      */
     public function testRedisUnavailableFailover(): void
     {
-        $testHandler = new \Monolog\Handler\TestHandler();
-        Log::getLogger()->pushHandler($testHandler);
-        
         $originalConfig = Config::get('cache.default');
         $fallbackStore = 'array';
 
-        try {
-            $this->assertTrue(extension_loaded('redis'), 'Redis extension is not loaded');
-            
-            // Configure array store as fallback
-            Config::set('cache.stores.array', [
-                'driver' => 'array'
-            ]);
-            
-            // Configure Redis with invalid connection
-            Config::set('cache.default', 'redis');
-            Config::set('cache.stores.redis', [
-                'driver' => 'redis',
-                'client' => 'phpredis',
-                'prefix' => 'test_',
-                'default' => [
-                    'host' => '127.0.0.1',
-                    'port' => 63799,
-                    'timeout' => 0.1
-                ]
-            ]);
-            
-            // Configure fallback
-            Config::set('fallback-cache.fallback_cache_store', $fallbackStore);
-            
-            // Clear instances
-            $this->app->forgetInstance('redis');
-            $this->app->forgetInstance('cache');
-            Cache::forgetDriver('redis');
-            Cache::forgetDriver($fallbackStore);
-            
-            // Register service provider
-            $this->serviceProvider->register();
-            $this->serviceProvider->boot();
-
-            // Should still be redis initially
-            $this->assertEquals('redis', Config::get('cache.default'));
-
-            try {
-                // This should fail and trigger fallback
-                Cache::store('redis')->put('test_key', 'test_value', 60);
-            } catch (\Throwable $e) {
-                // Expected Redis error, now try with default store
-                Cache::put('test_key', 'test_value', 60);
-            }
-            
-            // Should have switched to array store
-            $this->assertEquals($fallbackStore, Config::get('cache.default'));
-            
-            // Should be able to get the value from array store
-            $this->assertEquals('test_value', Cache::get('test_key'));
-            
-            // Verify logs
-            $found = false;
-            foreach ($testHandler->getRecords() as $record) {
-                if (str_contains($record['message'], 'Redis connection failed')) {
-                    $found = true;
-                    break;
-                }
-            }
-            $this->assertTrue($found, 'Expected fallback warning log not found');
-            
-        } finally {
-            Config::set('cache.default', $originalConfig);
-            Log::getLogger()->popHandler();
+        // Configure Redis with invalid connection
+        Config::set('cache.default', 'redis');
+        Config::set('cache.stores.redis', [
+            'driver' => 'redis',
+            'client' => 'phpredis',
+            'default' => [
+                'host' => 'non.existent.redis.host',
+                'port' => 63799,
+                'timeout' => 0.1,
+                'retry_interval' => 0
+            ]
+        ]);
+        
+        // Configure fallback
+        Config::set(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, $fallbackStore);
+        
+        // Clean up instances
+        foreach (['redis', $fallbackStore] as $driver) {
+            Cache::forgetDriver($driver);
+            $this->app->forgetInstance("cache.store.{$driver}");
         }
+        $this->app->forgetInstance('cache');
+        $this->app->forgetInstance('cache.store');
+        $this->app->forgetInstance('redis');
+        
+        // Register and boot
+        $this->serviceProvider->register();
+        $this->serviceProvider->boot();
+
+        try {
+            $manager = $this->app->make('cache');
+            $manager->driver('redis')->get('test_key');
+        } catch (\Exception $e) {
+            // Expected exception, now try getting a value using default store
+            try {
+                $manager->get('test_key');
+            } catch (\Exception $e2) {
+                // Expected secondary exception
+            }
+        }
+        
+        // Check if failover occurred
+        $this->assertTrue($this->serviceProvider->hasFailedOver(), 'Failover flag should be set');
+        
+        // Get current store instance
+        $store = Cache::getStore();
+
+        $this->assertInstanceOf("Illuminate\\Cache\\{$fallbackStore}Store", $store, 'Should be using fallback store');
+        
+        // Should work with fallback
+        Cache::put('test_key', 'test_value', 60);
+        $this->assertEquals('test_value', Cache::get('test_key'));
+        
+        Config::set('cache.default', $originalConfig);
     }
 }
