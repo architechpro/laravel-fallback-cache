@@ -2,6 +2,8 @@
 
 namespace LaravelFallbackCache;
 
+use Closure;
+use Illuminate\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
@@ -12,6 +14,66 @@ use Throwable;
 class FallbackCacheServiceProvider extends ServiceProvider
 {
     public const CONFIG_CACHE_DEFAULT = 'cache.default';
+    private bool $hasFailedOver = false;
+
+    /**
+     * @return void
+     */
+    public function register(): void
+    {
+        parent::register();
+
+        // Intercept Redis connector creation
+        $this->app->extend('redis', function ($redis, $app) {
+            return new class($redis, $app) extends \Illuminate\Redis\RedisManager {
+                protected $app;
+                private $hasFailedOver = false;
+
+                public function __construct($redis, $app)
+                {
+                    parent::__construct($app, $redis->driver, $redis->config);
+                    $this->app = $app;
+                }
+
+                public function connection($name = null)
+                {
+                    try {
+                        return parent::connection($name);
+                    } catch (Throwable $e) {
+                        if ($this->hasFailedOver) {
+                            throw $e;
+                        }
+
+                        $currentStore = Config::get('cache.default');
+                        $fallbackStore = Configuration::getFallbackCacheStore();
+
+                        if ($currentStore === $fallbackStore) {
+                            throw $e;
+                        }
+
+                        Log::warning(
+                            'Redis connection failed. Switching cache to fallback store.',
+                            [
+                                'exception' => get_class($e),
+                                'message' => $e->getMessage(),
+                                'from_store' => $currentStore,
+                                'to_store' => $fallbackStore
+                            ]
+                        );
+
+                        Config::set('cache.default', $fallbackStore);
+                        $this->hasFailedOver = true;
+
+                        // Create a new cache instance with the fallback store
+                        Cache::forgetDriver($currentStore);
+                        Cache::forgetDriver($fallbackStore);
+
+                        throw $e; // Re-throw to let Cache handle the fallback
+                    }
+                }
+            };
+        });
+    }
 
     /**
      * @return void
@@ -19,80 +81,6 @@ class FallbackCacheServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->publishConfig();
-        
-        if (!$this->isCacheStoreHealthy()) {
-            $fallbackStore = Configuration::getFallbackCacheStore();
-            
-            if ($fallbackStore === Config::get(self::CONFIG_CACHE_DEFAULT)) {
-                Log::warning('Cannot fallback to the same cache store that failed');
-                return;
-            }
-            
-            $this->switchToFallbackCacheStore();
-        }
-    }
-
-    /**
-     * @return void
-     */
-    private function switchToFallbackCacheStore(): void
-    {
-        $fallbackStore = Configuration::getFallbackCacheStore();
-        
-        Log::info(
-            'Switching to fallback cache store',
-            [
-                'from' => Config::get(self::CONFIG_CACHE_DEFAULT),
-                'to' => $fallbackStore
-            ]
-        );
-        
-        Config::set(
-            self::CONFIG_CACHE_DEFAULT,
-            $fallbackStore
-        );
-    }
-
-    /**
-     * @return bool
-     */
-    private function isCacheStoreHealthy(): bool
-    {
-        try {
-            // First check if the store is properly configured
-            $defaultStore = Config::get('cache.default');
-            if (empty($defaultStore)) {
-                Log::error('Default cache store is not configured');
-                return false;
-            }
-
-            $storeConfig = Config::get("cache.stores.{$defaultStore}");
-            if (empty($storeConfig)) {
-                Log::error(
-                    'Cache store configuration is missing',
-                    ['store' => $defaultStore]
-                );
-                return false;
-            }
-
-            Cache::get('health_check_key');
-            
-        } catch (Throwable $exception) {
-            Log::error(
-                'Cache store is unhealthy',
-                [
-                    'store' => Config::get(self::CONFIG_CACHE_DEFAULT),
-                    'driver' => Config::get("cache.stores.{$defaultStore}.driver"),
-                    'exception' => get_class($exception),
-                    'message' => $exception->getMessage(),
-                    'trace' => $exception->getTraceAsString()
-                ]
-            );
-
-            return false;
-        }
-
-        return true;
     }
 
     /**

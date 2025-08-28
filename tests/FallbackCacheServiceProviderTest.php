@@ -72,45 +72,76 @@ class FallbackCacheServiceProviderTest extends TestCase
      */
     public function testRedisUnavailableFailover(): void
     {
+        $testHandler = new \Monolog\Handler\TestHandler();
+        Log::getLogger()->pushHandler($testHandler);
+        
         $originalConfig = Config::get('cache.default');
-        $fallbackStore = 'file';
+        $fallbackStore = 'array';
 
         try {
-            // Backup existing Redis configuration
-            $redisConfig = Config::get('cache.stores.redis');
+            $this->assertTrue(extension_loaded('redis'), 'Redis extension is not loaded');
             
-            // Configure Redis as the default cache store with invalid connection
+            // Configure array store as fallback
+            Config::set('cache.stores.array', [
+                'driver' => 'array'
+            ]);
+            
+            // Configure Redis with invalid connection
             Config::set('cache.default', 'redis');
-            Config::set('cache.stores.redis', array_merge($redisConfig ?? [], [
+            Config::set('cache.stores.redis', [
                 'driver' => 'redis',
                 'client' => 'phpredis',
-                'clusters' => null,
-                'options' => ['connect_timeout' => 1], // Short timeout for faster test
+                'prefix' => 'test_',
                 'default' => [
-                    'host' => 'non.existent.redis.host',
-                    'password' => null,
-                    'port' => 63799
+                    'host' => '127.0.0.1',
+                    'port' => 63799,
+                    'timeout' => 0.1
                 ]
-            ]));
-
-            // Configure fallback cache store
+            ]);
+            
+            // Configure fallback
             Config::set('fallback-cache.fallback_cache_store', $fallbackStore);
             
-            // Initialize the service provider
+            // Clear instances
+            $this->app->forgetInstance('redis');
+            $this->app->forgetInstance('cache');
+            Cache::forgetDriver('redis');
+            Cache::forgetDriver($fallbackStore);
+            
+            // Register service provider
+            $this->serviceProvider->register();
             $this->serviceProvider->boot();
 
-            // Verify that the cache store has been switched to file
-            $this->assertEquals($fallbackStore, Config::get('cache.default'));
+            // Should still be redis initially
+            $this->assertEquals('redis', Config::get('cache.default'));
 
-            // Try to use cache to verify it works
-            Cache::put('test_key', 'test_value', 60);
-            $this->assertEquals('test_value', Cache::get('test_key'));
-        } finally {
-            // Restore original cache configuration
-            Config::set('cache.default', $originalConfig);
-            if (isset($redisConfig)) {
-                Config::set('cache.stores.redis', $redisConfig);
+            try {
+                // This should fail and trigger fallback
+                Cache::store('redis')->put('test_key', 'test_value', 60);
+            } catch (\Throwable $e) {
+                // Expected Redis error, now try with default store
+                Cache::put('test_key', 'test_value', 60);
             }
+            
+            // Should have switched to array store
+            $this->assertEquals($fallbackStore, Config::get('cache.default'));
+            
+            // Should be able to get the value from array store
+            $this->assertEquals('test_value', Cache::get('test_key'));
+            
+            // Verify logs
+            $found = false;
+            foreach ($testHandler->getRecords() as $record) {
+                if (str_contains($record['message'], 'Redis connection failed')) {
+                    $found = true;
+                    break;
+                }
+            }
+            $this->assertTrue($found, 'Expected fallback warning log not found');
+            
+        } finally {
+            Config::set('cache.default', $originalConfig);
+            Log::getLogger()->popHandler();
         }
     }
 }
