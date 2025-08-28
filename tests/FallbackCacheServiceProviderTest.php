@@ -72,27 +72,45 @@ class FallbackCacheServiceProviderTest extends TestCase
      */
     public function testRedisUnavailableFailover(): void
     {
-        // Configure Redis as the default cache store
-        Config::set('cache.default', 'redis');
-        Config::set('cache.stores.redis', [
-            'driver' => 'redis',
-            'connection' => 'cache',
-            'host' => '127.0.0.1',
-            'password' => null,
-            'port' => 63799 // Using intentionally wrong port
-        ]);
+        $originalConfig = Config::get('cache.default');
+        $fallbackStore = 'file';
 
-        // Configure fallback cache store
-        Config::set('fallback-cache.fallback_cache_store', 'file');
-        
-        // Initialize the service provider
-        $this->serviceProvider->boot();
+        try {
+            // Backup existing Redis configuration
+            $redisConfig = Config::get('cache.stores.redis');
+            
+            // Configure Redis as the default cache store with invalid connection
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis', array_merge($redisConfig ?? [], [
+                'driver' => 'redis',
+                'client' => 'phpredis',
+                'clusters' => null,
+                'options' => ['connect_timeout' => 1], // Short timeout for faster test
+                'default' => [
+                    'host' => 'non.existent.redis.host',
+                    'password' => null,
+                    'port' => 63799
+                ]
+            ]));
 
-        // Verify that the cache store has been switched to file
-        $this->assertEquals('file', Config::get('cache.default'));
+            // Configure fallback cache store
+            Config::set('fallback-cache.fallback_cache_store', $fallbackStore);
+            
+            // Initialize the service provider
+            $this->serviceProvider->boot();
 
-        // Try to use cache to verify it works
-        Cache::put('test_key', 'test_value', 60);
-        $this->assertEquals('test_value', Cache::get('test_key'));
+            // Verify that the cache store has been switched to file
+            $this->assertEquals($fallbackStore, Config::get('cache.default'));
+
+            // Try to use cache to verify it works
+            Cache::put('test_key', 'test_value', 60);
+            $this->assertEquals('test_value', Cache::get('test_key'));
+        } finally {
+            // Restore original cache configuration
+            Config::set('cache.default', $originalConfig);
+            if (isset($redisConfig)) {
+                Config::set('cache.stores.redis', $redisConfig);
+            }
+        }
     }
 }

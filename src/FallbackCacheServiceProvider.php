@@ -19,8 +19,15 @@ class FallbackCacheServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->publishConfig();
-
+        
         if (!$this->isCacheStoreHealthy()) {
+            $fallbackStore = Configuration::getFallbackCacheStore();
+            
+            if ($fallbackStore === Config::get(self::CONFIG_CACHE_DEFAULT)) {
+                Log::warning('Cannot fallback to the same cache store that failed');
+                return;
+            }
+            
             $this->switchToFallbackCacheStore();
         }
     }
@@ -30,9 +37,19 @@ class FallbackCacheServiceProvider extends ServiceProvider
      */
     private function switchToFallbackCacheStore(): void
     {
+        $fallbackStore = Configuration::getFallbackCacheStore();
+        
+        Log::info(
+            'Switching to fallback cache store',
+            [
+                'from' => Config::get(self::CONFIG_CACHE_DEFAULT),
+                'to' => $fallbackStore
+            ]
+        );
+        
         Config::set(
             self::CONFIG_CACHE_DEFAULT,
-            Configuration::getFallbackCacheStore()
+            $fallbackStore
         );
     }
 
@@ -42,14 +59,33 @@ class FallbackCacheServiceProvider extends ServiceProvider
     private function isCacheStoreHealthy(): bool
     {
         try {
-            Cache::get('');
+            // First check if the store is properly configured
+            $defaultStore = Config::get('cache.default');
+            if (empty($defaultStore)) {
+                Log::error('Default cache store is not configured');
+                return false;
+            }
+
+            $storeConfig = Config::get("cache.stores.{$defaultStore}");
+            if (empty($storeConfig)) {
+                Log::error(
+                    'Cache store configuration is missing',
+                    ['store' => $defaultStore]
+                );
+                return false;
+            }
+
+            Cache::get('health_check_key');
+            
         } catch (Throwable $exception) {
             Log::error(
                 'Cache store is unhealthy',
                 [
+                    'store' => Config::get(self::CONFIG_CACHE_DEFAULT),
+                    'driver' => Config::get("cache.stores.{$defaultStore}.driver"),
                     'exception' => get_class($exception),
-                    'message'   => $exception->getMessage(),
-                    'trace'     => $exception->getTraceAsString()
+                    'message' => $exception->getMessage(),
+                    'trace' => $exception->getTraceAsString()
                 ]
             );
 
