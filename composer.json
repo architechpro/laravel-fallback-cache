@@ -1,5 +1,5 @@
 {
-    "name": "lukaszaleckas/laravel-fallback-cache",
+    "name": "architechpro/laravel-fallback-cache",
     "autoload": {
         "psr-4": {
             "LaravelFallbackCache\\": "src/"
@@ -20,21 +20,21 @@
     },
     "authors": [
         {
-            "name": "lukaszaleckas",
-            "email": "luk.zaleckas@gmail.com"
+            "name": "architechpro",
+            "email": "contact@architechpro.com"
         }
     ],
     "require": {
         "php": "^7.4|^8.0",
-        "laravel/framework": "^8.0|^9.0|^10.0"
+        "laravel/framework": "^8.0|^9.0|^10.0|^11.0|^12.0"
     },
     "require-dev": {
-        "mockery/mockery": "^1.5",
-        "phpstan/phpstan-mockery": "^1.0",
-        "phpunit/phpunit": "^9.5",
-        "slevomat/coding-standard": "^6.4",
-        "squizlabs/php_codesniffer": "^3.6",
-        "nunomaduro/larastan": "^1.0",
-        "orchestra/testbench": "^6.24"
+        "mockery/mockery": "^1.6.11",
+        "phpstan/phpstan-mockery": "^1.1.2",
+        "phpunit/phpunit": "^9.6.19",
+        "slevomat/coding-standard": "^8.15.0",
+        "squizlabs/php_codesniffer": "^3.9.1",
+        "larastan/larastan": "^1.0.3",
+        "orchestra/testbench": "^6.43.2"
     }
 }
