@@ -12,21 +12,18 @@ use Throwable;
 class FallbackCacheServiceProvider extends ServiceProvider
 {
     public const CONFIG_CACHE_DEFAULT = 'cache.default';
-    /** @var bool */
+
     public function setFailedOver(bool $value): void
     {
-        // error_log("Setting failover state to: " . ($value ? "true" : "false"));
         FailoverState::setFailedOver($value);
     }
     
     public function hasFailedOver(): bool
     {
-        $result = FailoverState::hasFailedOver();
-        // error_log("Checking failover state: " . ($result ? "true" : "false"));
-        return $result;
+        return FailoverState::hasFailedOver();
     }
 
-    protected function getRedisWrapper($redis)
+    protected function getRedisWrapper(object $redis): RedisWrapper
     {
         return new RedisWrapper($redis, $this);
     }
@@ -35,30 +32,32 @@ class FallbackCacheServiceProvider extends ServiceProvider
     {
         parent::register();
 
-        // Make sure the fallback store is properly configured
-        $fallbackStore = $this->app['config']->get(
-            Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, 
-            Configuration::CACHE_DRIVER_ARRAY
-        );
-        
-        $this->app['config']->set('cache.stores.' . $fallbackStore, [
-            'driver' => $fallbackStore
-        ]);
+        $this->configureFallbackStore();
         
         // Initialize failover state
         $this->setFailedOver(false);
-
-        FailoverState::setFailedOver(false);
         
-        $provider = $this;
-
         // Override Cache manager to handle failover
-        $this->app->extend('cache', function ($manager, $app) use ($provider) {
-            return new FallbackCacheManager($app, $provider);
+        $this->app->extend('cache', function ($app, $manager) {
+            return new FallbackCacheManager($app, $this);
         });
 
         $this->app->singleton(Configuration::class);
         $this->mergeConfigFrom(__DIR__ . '/Config/fallback-cache.php', Configuration::CONFIG);
+    }
+
+    protected function configureFallbackStore(): void 
+    {
+        $fallbackStore = Config::get(
+            Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE,
+            Configuration::CACHE_DRIVER_ARRAY
+        );
+
+        if (!isset($this->app['config']['cache.stores.' . $fallbackStore])) {
+            $this->app['config']->set('cache.stores.' . $fallbackStore, [
+                'driver' => $fallbackStore
+            ]);
+        }
     }
 
     public function boot(): void
@@ -67,12 +66,6 @@ class FallbackCacheServiceProvider extends ServiceProvider
             __DIR__ . '/Config/fallback-cache.php' => config_path('fallback-cache.php'),
         ]);
 
-        // Make sure the fallback store is properly configured
-        $fallbackStore = Config::get(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, Configuration::CACHE_DRIVER_ARRAY);
-        if (!isset($this->app['config']['cache.stores.' . $fallbackStore])) {
-            $this->app['config']['cache.stores.' . $fallbackStore] = [
-                'driver' => $fallbackStore
-            ];
-        }
+        $this->configureFallbackStore();
     }
 }

@@ -100,10 +100,12 @@ class FallbackCacheManager extends CacheManager
     protected function createFallbackDriver(string $driver)
     {
         if ($driver === 'array') {
+            // For array store, we don't need any connection configuration
             return $this->repository(new ArrayStore);
         }
         
-        return $this->store($driver);
+        // For other drivers like 'database', use the standard store creation
+        return parent::store($driver);
     }
     
     /**
