@@ -33,9 +33,18 @@ class FallbackCacheManager extends CacheManager
         // error_log("Creating Redis driver. Failover state: " . ($this->provider->hasFailedOver() ? "true" : "false"));
 
         // Ensure fallback store is configured
-        $this->app['config']->set("cache.stores.{$fallbackStore}", [
+        $fallbackConfig = [
             'driver' => $fallbackStore
-        ]);
+        ];
+        
+        // Add database specific configuration if needed
+        if ($fallbackStore === 'database') {
+            $fallbackConfig['table'] = 'cache';
+            $fallbackConfig['connection'] = null;
+            $fallbackConfig['lock_connection'] = null;
+        }
+        
+        $this->app['config']->set("cache.stores.{$fallbackStore}", $fallbackConfig);
 
         if ($this->provider->hasFailedOver()) {
             // error_log("Already failed over, using fallback: " . $fallbackStore);
