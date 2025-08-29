@@ -45,7 +45,7 @@ LaravelFallbackCache\FallbackCacheServiceProvider::class
 3. Publish the configuration file:
 
 ```bash
-php artisan vendor:publish --tag=fallback-cache
+php artisan vendor:publish --provider="LaravelFallbackCache\FallbackCacheServiceProvider"
 ```
 
 ## Configuration
