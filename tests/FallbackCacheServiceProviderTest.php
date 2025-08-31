@@ -50,6 +50,9 @@ class FallbackCacheServiceProviderTest extends TestCase
             'driver' => 'file',
             'path' => storage_path('framework/cache/data'),
         ]);
+        Config::set('cache.stores.array', [
+            'driver' => 'array',
+        ]);
         Config::set(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, $fallbackStore);
         
         $this->serviceProvider->register();
