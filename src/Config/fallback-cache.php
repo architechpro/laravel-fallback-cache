@@ -12,5 +12,11 @@ return [
     Configuration::FALLBACK_CACHE_STORE => env(
         'FALLBACK_CACHE_STORE',
         Configuration::CACHE_DRIVER_ARRAY
-    )
+    ),
+    
+    /**
+     * Whether to extend the cache manager.
+     * Set to false if you have conflicts with session management.
+     */
+    'extend_cache_manager' => env('FALLBACK_CACHE_EXTEND_MANAGER', true),
 ];

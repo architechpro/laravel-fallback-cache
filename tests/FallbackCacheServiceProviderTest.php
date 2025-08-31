@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use LaravelFallbackCache\Config\Configuration;
+use LaravelFallbackCache\FallbackCacheManager;
 use LaravelFallbackCache\FallbackCacheServiceProvider;
 use Orchestra\Testbench\TestCase;
 
@@ -179,5 +180,51 @@ class FallbackCacheServiceProviderTest extends TestCase
         $this->assertEquals('test_value', Cache::get('test_key'));
         
         Config::set('cache.default', $originalConfig);
+    }
+
+    /**
+     * Test that cache manager extension is disabled when session driver is cache
+     */
+    public function testDoesNotExtendCacheManagerWhenSessionDriverIsCache(): void
+    {
+        // Set session driver to cache
+        Config::set('session.driver', 'cache');
+        
+        // Create a fresh service provider instance
+        $serviceProvider = new FallbackCacheServiceProvider($this->app);
+        $serviceProvider->register();
+        
+        // The cache manager should NOT be extended when session driver is cache
+        $cacheManager = $this->app->make('cache');
+        
+        // The cache manager should be the original Laravel cache manager, not our fallback one
+        $this->assertNotInstanceOf(FallbackCacheManager::class, $cacheManager);
+        
+        // But the fallback manager should still be available as a separate service
+        $fallbackManager = $this->app->make('cache.fallback');
+        $this->assertInstanceOf(FallbackCacheManager::class, $fallbackManager);
+    }
+
+    /**
+     * Test that cache manager extension is enabled when session driver is not cache
+     */
+    public function testExtendsCacheManagerWhenSessionDriverIsNotCache(): void
+    {
+        // Set session driver to file (not cache)
+        Config::set('session.driver', 'file');
+        
+        // Create a fresh service provider instance
+        $serviceProvider = new FallbackCacheServiceProvider($this->app);
+        $serviceProvider->register();
+        
+        // The cache manager SHOULD be extended when session driver is not cache
+        $cacheManager = $this->app->make('cache');
+        
+        // The cache manager should be our fallback one
+        $this->assertInstanceOf(FallbackCacheManager::class, $cacheManager);
+        
+        // And the fallback manager should be the same instance
+        $fallbackManager = $this->app->make('cache.fallback');
+        $this->assertSame($cacheManager, $fallbackManager);
     }
 }
