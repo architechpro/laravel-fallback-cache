@@ -47,6 +47,15 @@ class FallbackCacheServiceProvider extends ServiceProvider
             $this->app->extend('cache', function ($manager, $app) {
                 return $app->make('cache.fallback');
             });
+        } else {
+            // Log when cache manager extension is skipped for debugging
+            $sessionDriver = $this->app['config']->get('session.driver');
+            $sessionStore = $this->app['config']->get('session.store');
+            Log::info('FallbackCache: Cache manager extension skipped', [
+                'session_driver' => $sessionDriver,
+                'session_store' => $sessionStore,
+                'reason' => 'Session compatibility'
+            ]);
         }
 
         $this->app->singleton(Configuration::class);
@@ -60,6 +69,11 @@ class FallbackCacheServiceProvider extends ServiceProvider
      */
     protected function shouldExtendCacheManager(): bool
     {
+        // Check if explicitly disabled
+        if ($this->app['config']->get(Configuration::CONFIG . '.extend_cache_manager', true) === false) {
+            return false;
+        }
+        
         // Don't extend if session driver uses cache or redis to avoid conflicts
         $sessionDriver = $this->app['config']->get('session.driver');
         
@@ -73,8 +87,26 @@ class FallbackCacheServiceProvider extends ServiceProvider
             return false;
         }
         
-        // Allow explicit enabling via config
-        return $this->app['config']->get(Configuration::CONFIG . '.extend_cache_manager', true);
+        return true;
+    }
+
+    /**
+     * Force enable the fallback cache manager (use with caution)
+     * This bypasses session compatibility checks
+     * 
+     * @return void
+     */
+    public function forceEnableFallbackCache(): void
+    {
+        if (!$this->app->bound('cache.fallback')) {
+            return;
+        }
+        
+        $this->app->extend('cache', function ($manager, $app) {
+            return $app->make('cache.fallback');
+        });
+        
+        Log::info('FallbackCache: Cache manager extension force enabled');
     }
 
     protected function configureFallbackStore(): void 

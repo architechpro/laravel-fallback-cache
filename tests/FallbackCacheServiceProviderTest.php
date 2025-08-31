@@ -206,6 +206,53 @@ class FallbackCacheServiceProviderTest extends TestCase
     }
 
     /**
+     * Test that cache manager extension is disabled when session driver is redis
+     */
+    public function testDoesNotExtendCacheManagerWhenSessionDriverIsRedis(): void
+    {
+        // Set session driver to redis
+        Config::set('session.driver', 'redis');
+        
+        // Create a fresh service provider instance
+        $serviceProvider = new FallbackCacheServiceProvider($this->app);
+        $serviceProvider->register();
+        
+        // The cache manager should NOT be extended when session driver is redis
+        $cacheManager = $this->app->make('cache');
+        
+        // The cache manager should be the original Laravel cache manager, not our fallback one
+        $this->assertNotInstanceOf(FallbackCacheManager::class, $cacheManager);
+        
+        // But the fallback manager should still be available as a separate service
+        $fallbackManager = $this->app->make('cache.fallback');
+        $this->assertInstanceOf(FallbackCacheManager::class, $fallbackManager);
+    }
+
+    /**
+     * Test that cache manager extension is disabled when session store is redis
+     */
+    public function testDoesNotExtendCacheManagerWhenSessionStoreIsRedis(): void
+    {
+        // Set session store to redis
+        Config::set('session.driver', 'file');  // Different driver
+        Config::set('session.store', 'redis');   // But redis store
+        
+        // Create a fresh service provider instance
+        $serviceProvider = new FallbackCacheServiceProvider($this->app);
+        $serviceProvider->register();
+        
+        // The cache manager should NOT be extended when session store is redis
+        $cacheManager = $this->app->make('cache');
+        
+        // The cache manager should be the original Laravel cache manager, not our fallback one
+        $this->assertNotInstanceOf(FallbackCacheManager::class, $cacheManager);
+        
+        // But the fallback manager should still be available as a separate service
+        $fallbackManager = $this->app->make('cache.fallback');
+        $this->assertInstanceOf(FallbackCacheManager::class, $fallbackManager);
+    }
+
+    /**
      * Test that cache manager extension is enabled when session driver is not cache
      */
     public function testExtendsCacheManagerWhenSessionDriverIsNotCache(): void
@@ -226,5 +273,93 @@ class FallbackCacheServiceProviderTest extends TestCase
         // And the fallback manager should be the same instance
         $fallbackManager = $this->app->make('cache.fallback');
         $this->assertSame($cacheManager, $fallbackManager);
+    }
+
+    /**
+     * Test that forceEnableFallbackCache works even with session conflicts
+     */
+    public function testForceEnableFallbackCache(): void
+    {
+        // Set session driver to redis (which normally disables extension)
+        Config::set('session.driver', 'redis');
+        
+        // Create and register service provider
+        $serviceProvider = new FallbackCacheServiceProvider($this->app);
+        $serviceProvider->register();
+        
+        // Initially, cache manager should NOT be extended
+        $cacheManager = $this->app->make('cache');
+        $this->assertNotInstanceOf(FallbackCacheManager::class, $cacheManager);
+        
+        // Force enable the fallback cache
+        $serviceProvider->forceEnableFallbackCache();
+        
+        // Now the cache manager should be extended
+        $cacheManager = $this->app->make('cache');
+        $this->assertInstanceOf(FallbackCacheManager::class, $cacheManager);
+    }
+
+    /**
+     * Test Redis connection failure with AWS-like hostname
+     */
+    public function testRedisConnectionFailureWithAWSHostname(): void
+    {
+        $originalStore = 'redis';
+        $fallbackStore = 'array';
+
+        // Configure Redis with AWS-like hostname that doesn't exist
+        Config::set('cache.default', $originalStore);
+        Config::set('cache.stores.redis', [
+            'driver' => 'redis',
+            'client' => 'phpredis',
+            'default' => [
+                'host' => 'courses3.gprrw8.ng.0001.use2.cache.amazonaws.com',
+                'port' => 6379,
+                'timeout' => 1.0,
+                'retry_interval' => 0
+            ]
+        ]);
+        Config::set(Configuration::CONFIG . '.' . Configuration::FALLBACK_CACHE_STORE, $fallbackStore);
+        
+        // Ensure session doesn't conflict
+        Config::set('session.driver', 'file');
+        
+        // Temporarily change environment to trigger Redis connection test
+        $originalEnv = $this->app->environment();
+        $this->app->detectEnvironment(function () {
+            return 'production';
+        });
+        
+        // Clean up instances
+        foreach (['redis', $fallbackStore] as $driver) {
+            Cache::forgetDriver($driver);
+            $this->app->forgetInstance("cache.store.{$driver}");
+        }
+        $this->app->forgetInstance('cache');
+        $this->app->forgetInstance('cache.store');
+        $this->app->forgetInstance('redis');
+        
+        // Register and boot
+        $this->serviceProvider->register();
+        $this->serviceProvider->boot();
+
+        try {
+            // This should trigger Redis connection and failover
+            $cacheManager = $this->app->make('cache');
+            $store = $cacheManager->driver('redis');
+            
+            // Try to use cache - should fail over to array store
+            Cache::put('test_key', 'test_value', 60);
+            $this->assertEquals('test_value', Cache::get('test_key'));
+            
+            // Verify failover occurred
+            $this->assertTrue($this->serviceProvider->hasFailedOver(), 'Failover should have occurred');
+            $this->assertEquals($fallbackStore, Config::get('cache.default'), 'Should have switched to fallback store');
+        } finally {
+            // Restore original environment
+            $this->app->detectEnvironment(function () use ($originalEnv) {
+                return $originalEnv;
+            });
+        }
     }
 }

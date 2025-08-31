@@ -10,13 +10,62 @@ Call to undefined method Illuminate\Cache\ArrayStore::setConnection()
 
 This error occurs because the Laravel fallback cache manager extends the base cache manager with additional functionality that may conflict with session storage expectations.
 
+## Production Redis Connection Issues
+
+If you're experiencing Redis connection failures in production that result in 500 errors instead of graceful fallback, this could be due to:
+
+1. **Session driver conflicts**: If your session is configured to use Redis (`session.driver = 'redis'`), the cache manager extension is automatically disabled to prevent conflicts.
+
+2. **Service provider registration order**: The fallback cache service provider must be registered before other providers that use cache.
+
+### Troubleshooting Redis Connection Failures
+
+If you see errors like:
+```
+php_network_getaddresses: getaddrinfo for [hostname] failed: Name or service not known
+```
+
+And the fallback isn't working, check:
+
+1. **Session configuration**: 
+   ```bash
+   php artisan config:cache && php artisan config:clear
+   php artisan tinker
+   >>> config('session.driver')
+   >>> config('session.store')
+   ```
+
+2. **Force enable fallback cache** (if session conflicts are detected):
+   ```php
+   // In a service provider or early in your application
+   app(LaravelFallbackCache\FallbackCacheServiceProvider::class)->forceEnableFallbackCache();
+   ```
+
+3. **Check service provider registration**:
+   ```php
+   // config/app.php - Make sure this is BEFORE other providers that use cache
+   'providers' => [
+       LaravelFallbackCache\FallbackCacheServiceProvider::class,
+       // ... other providers
+   ],
+   ```
+
+4. **Verify configuration**:
+   ```php
+   // Check if fallback cache is available
+   dd(app()->bound('cache.fallback'));
+   
+   // Check current cache manager type
+   dd(get_class(app('cache')));
+   ```
+
 ## Root Cause
 
 The session manager expects cache stores to implement certain methods like `setConnection()`. When the fallback cache manager is active, it may provide stores that don't implement all the methods expected by the session manager.
 
 ## Solution
 
-The Laravel Fallback Cache package automatically detects when your session driver is set to `'cache'` and disables the cache manager extension to prevent conflicts.
+The Laravel Fallback Cache package automatically detects when your session driver is set to `'cache'` or `'redis'` and disables the cache manager extension to prevent conflicts.
 
 ### Automatic Detection (Recommended)
 

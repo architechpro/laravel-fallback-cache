@@ -52,7 +52,6 @@ class FallbackCacheManager extends CacheManager
     protected function createRedisDriver(array $config)
     {
         $fallbackStore = $this->getFallbackStore();
-        // error_log("Creating Redis driver. Failover state: " . ($this->provider->hasFailedOver() ? "true" : "false"));
 
         // Ensure fallback store is configured
         $fallbackConfig = [
@@ -71,34 +70,35 @@ class FallbackCacheManager extends CacheManager
         $this->app['config']->set("cache.stores.{$fallbackStore}", $fallbackConfig);
 
         if ($this->provider->hasFailedOver()) {
-            // error_log("Already failed over, using fallback: " . $fallbackStore);
             return $this->createFallbackDriver($fallbackStore);
         }
 
         try {
-            $store = parent::createRedisDriver($config);
+            // Test Redis connection first before creating the store
             $redisConfig = $config['default'] ?? [];
+            $host = $redisConfig['host'] ?? '127.0.0.1';
+            $port = (int)($redisConfig['port'] ?? 6379);
+            $timeout = (float)($redisConfig['timeout'] ?? 5.0);
+            
+            // Skip connection test in test environment
+            if ($this->app->environment() !== 'testing') {
+                // Create a test Redis connection to verify connectivity
+                $testRedis = new \Redis();
+                try {
+                    $testRedis->connect($host, $port, $timeout);
+                    $testRedis->close();
+                } catch (Throwable $e) {
+                    // Connection failed, trigger immediate failover
+                    $this->handleFailover();
+                    return $this->createFallbackDriver($fallbackStore);
+                }
+            }
+            
+            $store = parent::createRedisDriver($config);
             
             // Wrap Redis instance for failover support
             $redis = $store->getRedis();
             $wrapper = new RedisWrapper($redis, $this->provider);
-            
-            // Skip connection test in test environment
-            if ($this->app->environment() !== 'testing') {
-                // Test connection
-                try {
-                    $wrapper->connect(
-                        $redisConfig['host'] ?? '127.0.0.1',
-                        (int)($redisConfig['port'] ?? 6379),
-                        (float)($redisConfig['timeout'] ?? 0.0),
-                        null,
-                        (int)($redisConfig['retry_interval'] ?? 0)
-                    );
-                } catch (Throwable $e) {
-                    $this->handleFailover();
-                    throw $e;
-                }
-            }
             
             // Replace Redis instance with our wrapper
             $store->setRedis($wrapper);
