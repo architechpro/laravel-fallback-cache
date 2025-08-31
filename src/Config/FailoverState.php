@@ -15,4 +15,9 @@ class FailoverState
     {
         return self::$hasFailedOver;
     }
+    
+    public static function reset(): void
+    {
+        self::$hasFailedOver = false;
+    }
 }

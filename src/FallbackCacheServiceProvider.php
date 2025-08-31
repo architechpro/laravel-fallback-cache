@@ -38,7 +38,7 @@ class FallbackCacheServiceProvider extends ServiceProvider
         $this->setFailedOver(false);
         
         // Override Cache manager to handle failover
-        $this->app->extend('cache', function ($app, $manager) {
+        $this->app->extend('cache', function ($manager, $app) {
             return new FallbackCacheManager($app, $this);
         });
 
@@ -54,9 +54,18 @@ class FallbackCacheServiceProvider extends ServiceProvider
         );
 
         if (!isset($this->app['config']['cache.stores.' . $fallbackStore])) {
-            $this->app['config']->set('cache.stores.' . $fallbackStore, [
-                'driver' => $fallbackStore
-            ]);
+            $config = ['driver' => $fallbackStore];
+            
+            // Add driver-specific configuration
+            if ($fallbackStore === 'database') {
+                $config['table'] = 'cache';
+                $config['connection'] = null;
+                $config['lock_connection'] = null;
+            } elseif ($fallbackStore === 'file') {
+                $config['path'] = storage_path('framework/cache/data');
+            }
+            
+            $this->app['config']->set('cache.stores.' . $fallbackStore, $config);
         }
     }
 

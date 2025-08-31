@@ -2,15 +2,14 @@
 
 namespace LaravelFallbackCache;
 
-use Redis;
 use Throwable;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use LaravelFallbackCache\Config\Configuration;
 
-class RedisWrapper extends Redis
+class RedisWrapper
 {
-    /** @var Redis */
+    /** @var object */
     private $redis;
     
     /** @var FallbackCacheServiceProvider */
@@ -32,18 +31,27 @@ class RedisWrapper extends Redis
         ?array $context = null
     ): bool {
         try {
-            $result = $this->redis->connect(
-                $host,
-                $port,
-                $timeout,
-                $persistent_id,
-                $retry_interval,
-                $read_timeout,
-                $context
-            );
+            // Check if the redis instance has a connect method
+            if (method_exists($this->redis, 'connect')) {
+                $result = $this->redis->connect(
+                    $host,
+                    $port,
+                    $timeout,
+                    $persistent_id,
+                    $retry_interval,
+                    $read_timeout,
+                    $context
+                );
+            } else {
+                // For Laravel Redis connections, assume connection is established
+                $result = true;
+            }
             
-            // Test connection
-            $this->redis->ping();
+            // Test connection with ping if available
+            if (method_exists($this->redis, 'ping')) {
+                $this->redis->ping();
+            }
+            
             return $result;
         } catch (Throwable $e) {
             // error_log("Redis connection failed in wrapper: " . $e->getMessage());
