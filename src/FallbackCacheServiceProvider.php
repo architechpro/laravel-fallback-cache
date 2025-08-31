@@ -60,10 +60,16 @@ class FallbackCacheServiceProvider extends ServiceProvider
      */
     protected function shouldExtendCacheManager(): bool
     {
-        // Don't extend if session driver is 'cache' to avoid conflicts
+        // Don't extend if session driver uses cache or redis to avoid conflicts
         $sessionDriver = $this->app['config']->get('session.driver');
         
-        if ($sessionDriver === 'cache') {
+        if (in_array($sessionDriver, ['cache', 'redis'])) {
+            return false;
+        }
+        
+        // Also check if session.store is set to redis
+        $sessionStore = $this->app['config']->get('session.store');
+        if ($sessionStore === 'redis') {
             return false;
         }
         
