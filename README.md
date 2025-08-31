@@ -56,10 +56,19 @@ The package configuration file `fallback-cache.php` allows you to specify the fa
 return [
     // The cache store to use when the default store fails
     'fallback_cache_store' => env('FALLBACK_CACHE_STORE', 'array'),
+    
+    // Whether to extend the cache manager (auto-detected for session compatibility)
+    'extend_cache_manager' => env('FALLBACK_CACHE_EXTEND_MANAGER', true),
 ];
 ```
 
 By default, it will use the array driver as fallback, but you can configure any cache store supported by Laravel.
+
+### Session Manager Compatibility
+
+**Important:** If you're using Laravel's session manager with `session.driver = 'cache'`, the package automatically detects this and disables cache manager extension to prevent conflicts with `ArrayStore::setConnection()` errors.
+
+For detailed information about session compatibility, see [SESSION_MANAGER_COMPATIBILITY.md](SESSION_MANAGER_COMPATIBILITY.md).
 
 ## Usage
 
